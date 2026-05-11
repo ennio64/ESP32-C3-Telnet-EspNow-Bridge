@@ -16,6 +16,8 @@ Universal WiFi serial bridge for any UART-based controller
   - GPIO20 (RX) → TX of target board
   - GND → GND
   - 3V3 → 3V3
+  - RST (optional)
+  - One of these: GPIO4, GPIO5, GPIO6, GPIO7, GPIO10 (optional STATE PIN)
 
 ---
 
@@ -29,6 +31,8 @@ Universal WiFi serial bridge for any UART-based controller
 - Access Point fallback (always available)
 - NVS Storage for persistent settings
 - Serial bridge between WiFi clients and UART
+- **GrblHAL Advanced:** Configurable state pin, client filtering, auto-reset on disconnect
+- **Multi-pendant support:** Up to 4 simultaneous ESP‑NOW clients
 
 ---
 
@@ -72,6 +76,7 @@ Universal WiFi serial bridge for any UART-based controller
 3. Power on the ESP32‑C3  
 4. Connect to WiFi AP  
 5. Open **http://192.168.4.1**
+6. From the Web UI: **Reset to Default → Reboot → Load Configuration → Save**
 
 ---
 
@@ -103,6 +108,7 @@ ESP32-C3-Serial-Bridge/
 │   ├── nvs_storage.h             # NVS configuration storage
 │   ├── web_server.h              # Web server interface
 │   ├── wifi_manager.h            # WiFi management
+│   ├── grblHAL_advanced.h        # GrblHAL advanced features (header)
 │   └── MyWiFiData.h              # YOUR networks (edit this!)
 │
 ├── src/                          # Source files
@@ -113,7 +119,8 @@ ESP32-C3-Serial-Bridge/
 │   ├── wifi_manager.c            # WiFi initialization
 │   ├── WiFiSelector.c            # Network scanning
 │   ├── nvs_storage.c             # NVS operations
-│   └── web_server.c              # HTTP web server
+│   ├── web_server.c              # HTTP web server
+│   └── grblHAL_advanced.c        # GrblHAL advanced features (implementation)
 │
 ├── firmware/                     # Precompiled firmware
 │   ├── bootloader.bin            # Bootloader (0x0)
@@ -129,6 +136,7 @@ ESP32-C3-Serial-Bridge/
 ├── platformio.ini
 ├── CMakeLists.txt
 └── README.md
+
 ```
 
 ---
@@ -172,6 +180,12 @@ Features:
 - Reset to defaults
 - Reboot device
 
+### **GrblHAL Configuration Tab**
+- State Pin selection (GPIO4,5,6,7,10 or Disabled)
+- Signal Polarity (LOW/HIGH when connected)
+- Active Clients filter (Any / Telnet Only / ESP‑NOW Only)
+- Reset on Telnet Disconnect toggle
+
 ---
 
 # 📡 ESP‑NOW Pendant Support
@@ -202,6 +216,29 @@ Comparison:
 
 ---
 
+# 🎛️ GrblHAL Advanced Features
+
+The bridge includes special features designed for CNC machines running GrblHAL:
+
+### 🔌 State Pin (Output)
+- Configurable GPIO pin that signals connection status  
+- **Safe pins:** GPIO4, GPIO5, GPIO6, GPIO7, GPIO10  
+- **Signal Polarity:** Choose LOW or HIGH when client(s) connected  
+
+### 👥 Active Clients Filter
+| Mode | Description |
+|------|-------------|
+| **Any** | Telnet OR ESP‑NOW (default) |
+| **Telnet Only** | Only wireless network clients |
+| **ESP‑NOW Only** | Only wireless pendants |
+
+### 🔄 Reset on Disconnect
+- Automatically sends Ctrl‑X (0x18) to GrblHAL when a Telnet client disconnects  
+- Prevents machine from staying in alarm state  
+- Configurable via Web UI
+
+---
+
 # 🎮 Pendant Example (Peer_example/)
 
 Features:
@@ -223,21 +260,25 @@ Usage:
 
 # 🧩 Default Configuration
 
-| Setting         | Value |
-|----------------|--------|
-| AP SSID        | ESP32-C3-Serial-Bridge |
-| AP Password    | 12345678 |
-| AP Channel     | 6 |
-| AP IP          | 192.168.4.1 |
-| STA Static IP  | 192.168.1.123 |
-| Gateway        | 192.168.1.1 |
-| Netmask        | 255.255.255.0 |
-| Telnet Port    | 23 |
-| Web Port       | 80 |
-| UART Baud      | 115200 |
-| UART TX Pin    | GPIO21 |
-| UART RX Pin    | GPIO20 |
-| Debug Level    | 0 |
+| Setting | Value |
+|--------|--------|
+| AP SSID | ESP32-C3-Serial-Bridge |
+| AP Password | 12345678 |
+| AP Channel | 6 |
+| AP IP | 192.168.4.1 |
+| STA Static IP | 192.168.1.123 |
+| Gateway | 192.168.1.1 |
+| Netmask | 255.255.255.0 |
+| Telnet Port | 23 |
+| Web Port | 80 |
+| UART Baud | 115200 |
+| UART TX Pin | GPIO21 |
+| UART RX Pin | GPIO20 |
+| Debug Level | 0 |
+| **State Pin** | Disabled |
+| **Signal Polarity** | HIGH when connected |
+| **Active Clients** | Any |
+| **Reset on Telnet Disconnect** | Enabled |
 
 ---
 
@@ -260,12 +301,21 @@ Usage:
 2. Check serial log for: `📡 Canale ESP-NOW: X`  
 3. Retry pairing  
 
-### Factory reset
-```
-pio run --target erase
-pio run --target upload
-```
-Or use Web UI → Reset Default.
+### State pin not working
+1. Ensure pin is not used by other hardware  
+2. Check polarity setting  
+3. Verify Active Clients filter  
+4. Test with LED or multimeter  
+
+### Multiple ESP‑NOW pendants
+- Supports up to 4 pendants  
+- Each must send "PAIR"  
+- Use `espnow_clear_all_peers()` to reset all connections  
+
+### Reset on disconnect not working
+1. Ensure feature is enabled  
+2. Works only for Telnet  
+3. Verify GrblHAL accepts Ctrl‑X  
 
 ---
 
@@ -277,7 +327,7 @@ Or use Web UI → Reset Default.
 | /api/status | GET | WiFi + ESP‑NOW status |
 | /api/sysinfo | GET | Memory, version |
 | /api/networks | GET | Known WiFi networks |
-| /api/settings | GET | Current settings |
+| /api/settings | GET | Returns: ap_ssid, ap_password, ap_channel, static_ip, use_static_ip, **state_pin**, **state_pin_mode**, **client_mode**, **reset_on_disconnect** |
 | /api/debug | GET | Debug level |
 | /api/networks/add | POST | Add WiFi network |
 | /api/networks/remove | POST | Remove WiFi network |
@@ -305,8 +355,7 @@ Enable via Web UI or edit in `config.h`:
 
 # 📄 License (MIT)
 
-Copyright (c) 2026  Ennio SESANA
+Copyright (c) 2026  
 Permission is hereby granted, free of charge, to any person obtaining a copy  
 of this software and associated documentation files (the "Software"), to deal  
 in the Software without restriction…
-

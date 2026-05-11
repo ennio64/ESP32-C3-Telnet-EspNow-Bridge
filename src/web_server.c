@@ -8,11 +8,13 @@
 #include "nvs_storage.h"
 #include "wifi_manager.h"
 #include "config.h"
+#include "tcp_server.h"
+#include "espnow_handler.h"
 
 static const char *TAG = "WEB_SERVER";
 static httpd_handle_t server = NULL;
 
-// HTML page con organizzazione migliorata e sezione Debug
+// HTML page 
 static const char* HTML_PAGE = 
 "<!DOCTYPE html>"
 "<html>"
@@ -33,12 +35,11 @@ static const char* HTML_PAGE =
 "        .info-row { margin: 12px 0; display: flex; flex-wrap: wrap; align-items: center; }"
 "        .info-label { font-weight: bold; width: 150px; color: #ffd700; }"
 "        .info-value { flex: 1; font-family: monospace; }"
-"        input, button { padding: 8px 12px; margin: 5px; border-radius: 5px; border: none; }"
-"        input { background: #0f3460; color: #eee; }"
+"        input, button, select { padding: 8px 12px; margin: 5px; border-radius: 5px; border: none; }"
+"        input, select { background: #0f3460; color: #eee; }"
 "        input[type='text'] { width: 250px; }"
 "        input[type='password'] { width: 180px; }"
 "        input[type='checkbox'] { width: 18px; height: 18px; margin: 0 5px 0 0; vertical-align: middle; }"
-"        select { background: #0f3460; color: #eee; border: none; padding: 8px 12px; border-radius: 5px; }"
 "        button { background: #ffd700; color: #1a1a2e; cursor: pointer; transition: 0.3s; font-weight: bold; padding: 8px 16px; }"
 "        button:hover { background: #ffaa00; transform: scale(1.02); }"
 "        button.danger { background: #ff4444; color: white; }"
@@ -51,11 +52,8 @@ static const char* HTML_PAGE =
 "        .flex-right { display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px; }"
 "        .checkbox-row { display: flex; align-items: center; margin: 12px 0; }"
 "        hr { border-color: #0f3460; margin: 15px 0; }"
+"        .warning-box { background: #ffaa001a; border-left: 4px solid #ffaa00; padding: 10px; margin-bottom: 15px; border-radius: 5px; }"
 "        .note-box { background: #0f3460; padding: 10px; border-radius: 5px; margin-bottom: 15px; border-left: 3px solid #ffd700; }"
-"        .note-box small { color: #ffd700; }"
-"        .example-networks { background: #0a0a1a; padding: 10px; border-radius: 5px; margin-top: 10px; }"
-"        .example-title { color: #ffd700; font-size: 12px; margin-bottom: 5px; }"
-"        .example-item { font-family: monospace; font-size: 11px; color: #888; }"
 "        .label-show { display: flex; align-items: center; margin-left: 5px; cursor: pointer; }"
 "        .label-show span { font-size: 12px; color: #ffd700; }"
 "    </style>"
@@ -73,14 +71,11 @@ static const char* HTML_PAGE =
 "    <div class='card'>"
 "        <h2>📶 Known WiFi Networks</h2>"
 "        <div id='network-list'></div>"
-"        <div class='example-networks'>"
-"            <div class='example-title'>📝 Add your networks below:</div>"
-"            <div class='example-item'>1. Enter your WiFi SSID and password</div>"
-"            <div class='example-item'>2. Add up to 10 networks</div>"
-"            <div class='example-item'>3. Bridge auto-connects to best signal</div>"
+"        <div class='note-box'>"
+"            <small>📝 Add your networks below (max 10). Bridge auto-connects to best signal.</small>"
 "        </div>"
 "        <div class='flex' style='margin-top: 15px;'>"
-"            <input type='text' id='new-ssid' placeholder='SSID (e.g., Your_Network)'>"
+"            <input type='text' id='new-ssid' placeholder='SSID'>"
 "            <input type='password' id='new-pwd' placeholder='Password'>"
 "            <label class='label-show'>"
 "                <input type='checkbox' id='show-pwd' onclick='togglePassword()'>"
@@ -121,22 +116,60 @@ static const char* HTML_PAGE =
 "    </div>"
 "    <div class='card'>"
 "        <h2>🐛 Debug Settings</h2>"
-"        <div class='note-box'>"
-"            <small>⚠️ <strong>Note:</strong> Enable debug logs only for troubleshooting.<br>"
-"            Debug mode will show detailed serial output and may affect performance.</small>"
-"        </div>"
 "        <div class='info-row'>"
 "            <span class='info-label'>Debug Mode:</span>"
-"            <select id='debug-level' style='padding: 8px 12px; margin: 5px; border-radius: 5px; background: #0f3460; color: #eee; border: none;'>"
-"                <option value='0'>Disabled (default)</option>"
+"            <select id='debug-level'>"
+"                <option value='0'>Disabled</option>"
 "                <option value='1'>Basic Logs</option>"
-"                <option value='2'>Verbose (WiFi/ESP-NOW)</option>"
+"                <option value='2'>Verbose</option>"
 "            </select>"
-"            <button onclick='setDebugLevel()' style='margin-left: 10px;'>Apply</button>"
+"            <button onclick='setDebugLevel()'>Apply</button>"
 "        </div>"
 "        <div class='info-row'>"
 "            <span class='info-label'>Current Status:</span>"
 "            <span class='info-value' id='debug-current'>Loading...</span>"
+"        </div>"
+"    </div>"
+"    <div class='card'>"
+"        <h2>⚙️ GrblHAL Advanced Features</h2>"
+"        <div class='warning-box'>"
+"            <small>⚠️ <strong>Pin Safety for ESP32-C3 SuperMini:</strong><br>"
+"            ✅ <strong>Safe pins:</strong> GPIO4, GPIO5, GPIO6, GPIO7, GPIO10<br>"
+"            ❌ <strong>DO NOT USE:</strong> GPIO8 (LED RGB), GPIO9 (BOOT button), GPIO0-3 (boot affect)<br>"
+"            🔒 <strong>Reserved:</strong> GPIO20 (UART RX), GPIO21 (UART TX)</small>"
+"        </div>"
+"        <div class='info-row'>"
+"            <span class='info-label'>State Pin (output):</span>"
+"            <select id='state-pin'>"
+"                <option value='-1'>Disabled (default)</option>"
+"                <option value='4'>GPIO4</option>"
+"                <option value='5'>GPIO5</option>"
+"                <option value='6'>GPIO6</option>"
+"                <option value='7'>GPIO7</option>"
+"                <option value='10'>GPIO10</option>"
+"            </select>"
+"        </div>"
+"        <div class='info-row' id='pin-logic-row' style='display: none;'>"
+"            <span class='info-label'>Pin State Logic:</span>"
+"            <select id='state-pin-mode'>"
+"                <option value='0'>LOW when client connected</option>"
+"                <option value='1'>HIGH when client connected</option>"
+"            </select>"
+"        </div>"
+"        <div class='info-row'>"
+"            <span class='info-label'>Client Source:</span>"
+"            <select id='client-mode'>"
+"                <option value='0'>Any Client (Telnet or ESP-NOW)</option>"
+"                <option value='1'>Telnet Only</option>"
+"                <option value='2'>ESP-NOW Only</option>"
+"            </select>"
+"        </div>"
+"        <div class='info-row'>"
+"            <span class='info-label'>Reset on Telnet Disconnect:</span>"
+"            <select id='reset-on-disconnect'>"
+"                <option value='1'>Enabled (send Ctrl-X)</option>"
+"                <option value='0'>Disabled</option>"
+"            </select>"
 "        </div>"
 "    </div>"
 "    <div class='flex-right'>"
@@ -148,32 +181,26 @@ static const char* HTML_PAGE =
 "<script>"
 "function togglePassword() {"
 "    var pwd = document.getElementById('new-pwd');"
-"    if (pwd.type === 'password') {"
-"        pwd.type = 'text';"
-"    } else {"
-"        pwd.type = 'password';"
-"    }"
+"    if (pwd.type === 'password') { pwd.type = 'text'; }"
+"    else { pwd.type = 'password'; }"
 "}"
 "function fetchStatus() {"
 "    fetch('/api/status').then(r=>r.json()).then(data=>{"
 "        let cls = data.wifi_connected ? 'status-online' : 'status-offline';"
 "        let html = '<div class=\"status ' + cls + '\">';"
 "        html += '<div class=\"info-row\"><span class=\"info-label\">📡 WiFi (STA):</span><span class=\"info-value\">' + (data.wifi_connected ? data.wifi_ssid + ' (' + data.wifi_ip + ')' : 'Disconnected') + '</span></div>';"
-"        html += '<div class=\"info-row\"><span class=\"info-label\">🔗 ESP-NOW:</span><span class=\"info-value\">' + (data.espnow_paired ? '✅ Paired' : '⏳ Waiting for pairing') + '</span></div>';"
-"        html += '<div class=\"info-row\"><span class=\"info-label\">🖥️ Telnet Clients:</span><span class=\"info-value\">' + data.telnet_clients + ' connected</span></div>';"
-"        html += '<div class=\"info-row\"><span class=\"info-label\">📱 AP IP:</span><span class=\"info-value\">192.168.4.1 (always)</span></div>';"
+"        html += '<div class=\"info-row\"><span class=\"info-label\">🔗 ESP-NOW:</span><span class=\"info-value\">' + (data.espnow_paired ? '✅ Paired' : '⏳ Waiting') + '</span></div>';"
+"        html += '<div class=\"info-row\"><span class=\"info-label\">🖥️ Telnet Clients:</span><span class=\"info-value\">' + data.telnet_clients + '</span></div>';"
+"        html += '<div class=\"info-row\"><span class=\"info-label\">📱 AP IP:</span><span class=\"info-value\">192.168.4.1</span></div>';"
 "        html += '</div>';"
 "        document.getElementById('status').innerHTML = html;"
 "    });"
 "}"
 "function fetchSysInfo() {"
 "    fetch('/api/sysinfo').then(r=>r.json()).then(data=>{"
-"        let html = '<div class=\"info-row\"><span class=\"info-label\">Version:</span><span class=\"info-value\">' + data.version + '</span></div>';"
+"        let html = '<div class=\"info-row\"><span class=\"info-label\">Version:</span><span class=\"info-value\">1.1.0</span></div>';"
 "        html += '<div class=\"info-row\"><span class=\"info-label\">Compiled:</span><span class=\"info-value\">' + data.compile_date + ' ' + data.compile_time + '</span></div>';"
-"        html += '<div class=\"info-row\"><span class=\"info-label\">Connected to:</span><span class=\"info-value\">' + (data.wifi.connected ? data.wifi.ssid : 'None') + '</span></div>';"
-"        html += '<div class=\"info-row\"><span class=\"info-label\">WiFi IP (STA):</span><span class=\"info-value\">' + (data.wifi.connected ? data.wifi.ip : 'N/A') + '</span></div>';"
 "        html += '<div class=\"info-row\"><span class=\"info-label\">Free Memory:</span><span class=\"info-value\">' + (data.memory.free_heap / 1024).toFixed(1) + ' KB</span></div>';"
-"        html += '<div class=\"info-row\"><span class=\"info-label\">Min Free Memory:</span><span class=\"info-value\">' + (data.memory.min_free_heap / 1024).toFixed(1) + ' KB</span></div>';"
 "        document.getElementById('sysinfo').innerHTML = html;"
 "    });"
 "}"
@@ -181,7 +208,7 @@ static const char* HTML_PAGE =
 "    fetch('/api/networks').then(r=>r.json()).then(data=>{"
 "        let html = '';"
 "        if (data.networks.length === 0) {"
-"            html = '<p style=\"color: #ffaa00;\">⚠️ No networks configured. Add a network below.</p>';"
+"            html = '<p style=\"color: #ffaa00;\">⚠️ No networks configured.</p>';"
 "        } else {"
 "            data.networks.forEach(n => {"
 "                html += '<div class=\"network-item\">';"
@@ -200,14 +227,18 @@ static const char* HTML_PAGE =
 "        document.getElementById('ap-channel').value = data.ap_channel;"
 "        document.getElementById('static-ip').value = data.static_ip;"
 "        document.getElementById('use-static').checked = data.use_static_ip;"
+"        document.getElementById('state-pin').value = data.state_pin;"
+"        document.getElementById('state-pin-mode').value = data.state_pin_mode;"
+"        document.getElementById('client-mode').value = data.client_mode;"
+"        document.getElementById('reset-on-disconnect').value = data.reset_on_disconnect;"
+"        var row = document.getElementById('pin-logic-row');"
+"        if (data.state_pin == -1) { row.style.display = 'none'; }"
+"        else { row.style.display = 'flex'; }"
 "    });"
 "}"
 "function fetchDebugStatus() {"
 "    fetch('/api/debug').then(r=>r.json()).then(data=>{"
-"        let status = '';"
-"        if (data.level == 0) status = '🔇 Disabled';"
-"        else if (data.level == 1) status = '🔊 Basic Logs';"
-"        else status = '🔊🔊 Verbose (WiFi/ESP-NOW)';"
+"        let status = ['🔇 Disabled', '🔊 Basic', '🔊🔊 Verbose'][data.level] || 'Unknown';"
 "        document.getElementById('debug-current').innerHTML = status;"
 "        document.getElementById('debug-level').value = data.level;"
 "    });"
@@ -218,10 +249,7 @@ static const char* HTML_PAGE =
 "        method: 'POST',"
 "        body: JSON.stringify({level: parseInt(level)}),"
 "        headers: {'Content-Type': 'application/json'}"
-"    }).then(() => {"
-"        alert('Debug level changed. Reboot to take effect.');"
-"        fetchDebugStatus();"
-"    });"
+"    }).then(() => { alert('Debug level changed. Reboot to take effect.'); });"
 "}"
 "function addNetwork() {"
 "    let ssid = document.getElementById('new-ssid').value.trim();"
@@ -248,7 +276,11 @@ static const char* HTML_PAGE =
 "        ap_password: document.getElementById('ap-pwd').value,"
 "        ap_channel: parseInt(document.getElementById('ap-channel').value) || 6,"
 "        static_ip: document.getElementById('static-ip').value,"
-"        use_static_ip: document.getElementById('use-static').checked"
+"        use_static_ip: document.getElementById('use-static').checked,"
+"        state_pin: parseInt(document.getElementById('state-pin').value),"
+"        state_pin_mode: parseInt(document.getElementById('state-pin-mode').value),"
+"        client_mode: parseInt(document.getElementById('client-mode').value),"
+"        reset_on_disconnect: parseInt(document.getElementById('reset-on-disconnect').value)"
 "    };"
 "    fetch('/api/settings', {"
 "        method: 'POST',"
@@ -267,6 +299,11 @@ static const char* HTML_PAGE =
 "        alert('Rebooting...');"
 "    }"
 "}"
+"document.getElementById('state-pin').addEventListener('change', function() {"
+"    var row = document.getElementById('pin-logic-row');"
+"    if (this.value == '-1') { row.style.display = 'none'; }"
+"    else { row.style.display = 'flex'; }"
+"});"
 "setInterval(() => { fetchStatus(); fetchSysInfo(); fetchDebugStatus(); }, 5000);"
 "fetchStatus();"
 "fetchNetworks();"
@@ -276,6 +313,7 @@ static const char* HTML_PAGE =
 "</script>"
 "</body>"
 "</html>";
+
 
 // Helper per inviare risposta JSON
 static void send_json_response(httpd_req_t *req, const char *fmt, ...) {
@@ -349,11 +387,16 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
         connected_ssid[sizeof(connected_ssid) - 1] = '\0';
     }
     
+    int telnet_clients = tcp_server_get_client_count();
+    bool espnow_paired = espnow_is_paired();
+    
     send_json_response(req,
-        "{\"wifi_connected\":%s,\"wifi_ip\":\"%s\",\"wifi_ssid\":\"%s\",\"telnet_clients\":0,\"espnow_paired\":false}",
+        "{\"wifi_connected\":%s,\"wifi_ip\":\"%s\",\"wifi_ssid\":\"%s\",\"telnet_clients\":%d,\"espnow_paired\":%s}",
         wifi_is_connected() ? "true" : "false",
         wifi_get_ip(),
-        connected_ssid);
+        connected_ssid,
+        telnet_clients,
+        espnow_paired ? "true" : "false");
     return ESP_OK;
 }
 
@@ -400,9 +443,11 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
     const bridge_config_t *cfg = nvs_storage_get_config();
     send_json_response(req,
         "{\"ap_ssid\":\"%s\",\"ap_password\":\"%s\",\"ap_channel\":%d,"
-        "\"static_ip\":\"%s\",\"use_static_ip\":%s}",
+        "\"static_ip\":\"%s\",\"use_static_ip\":%s,"
+        "\"state_pin\":%d,\"state_pin_mode\":%d,\"client_mode\":%d,\"reset_on_disconnect\":%d}",
         cfg->ap_ssid, cfg->ap_password, cfg->ap_channel,
-        cfg->static_ip, cfg->use_static_ip ? "true" : "false");
+        cfg->static_ip, cfg->use_static_ip ? "true" : "false",
+        cfg->state_pin, cfg->state_pin_mode, cfg->client_mode, cfg->reset_on_disconnect);
     return ESP_OK;
 }
 
@@ -475,6 +520,7 @@ static esp_err_t reset_post_handler(httpd_req_t *req) {
 }
 
 // ========== API POST GENERICO per add/remove/settings ==========
+// ========== API POST GENERICO per add/remove/settings ==========
 static esp_err_t api_post_handler(httpd_req_t *req) {
     char buffer[1024];
     int ret = httpd_req_recv(req, buffer, sizeof(buffer) - 1);
@@ -526,6 +572,13 @@ static esp_err_t api_post_handler(httpd_req_t *req) {
         char *static_ip = extract_json_value(buffer, "static_ip");
         char *use_static_str = extract_json_value(buffer, "use_static_ip");
         
+        // ========== GrblHAL Advanced ==========
+        char *state_pin_str = extract_json_value(buffer, "state_pin");
+        char *state_pin_mode_str = extract_json_value(buffer, "state_pin_mode");
+        char *client_mode_str = extract_json_value(buffer, "client_mode");
+        char *reset_on_disconnect_str = extract_json_value(buffer, "reset_on_disconnect");
+        // ======================================
+        
         if (ap_ssid) {
             strncpy(cfg->ap_ssid, ap_ssid, MAX_AP_SSID_LEN - 1);
             cfg->ap_ssid[MAX_AP_SSID_LEN - 1] = '\0';
@@ -549,6 +602,25 @@ static esp_err_t api_post_handler(httpd_req_t *req) {
             cfg->use_static_ip = (strcmp(use_static_str, "true") == 0);
             free(use_static_str);
         }
+        
+        // ========== Salva GrblHAL Advanced ==========
+        if (state_pin_str) {
+            cfg->state_pin = atoi(state_pin_str);
+            free(state_pin_str);
+        }
+        if (state_pin_mode_str) {
+            cfg->state_pin_mode = atoi(state_pin_mode_str);
+            free(state_pin_mode_str);
+        }
+        if (client_mode_str) {
+            cfg->client_mode = atoi(client_mode_str);
+            free(client_mode_str);
+        }
+        if (reset_on_disconnect_str) {
+            cfg->reset_on_disconnect = atoi(reset_on_disconnect_str);
+            free(reset_on_disconnect_str);
+        }
+        // ==========================================
         
         nvs_storage_save_config();
         httpd_resp_send(req, "{\"status\":\"saved\"}", 17);

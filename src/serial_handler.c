@@ -13,8 +13,69 @@ void espnow_send_uart_response(const uint8_t* data, int len);
 
 static const char *TAG = "SERIAL_HANDLER";
 static QueueHandle_t uart_to_tcp_queue = NULL;
-static QueueHandle_t tcp_to_uart_queue = NULL;
-static QueueHandle_t uart_espnow_queue = NULL;  // Coda SEPARATA per ESP-NOW
+// RIMOSSO: tcp_to_uart_queue (dead code)
+static QueueHandle_t uart_espnow_queue = NULL;
+
+// Buffer pool per ridurre allocazioni
+#define DATA_POOL_SIZE 10
+typedef struct {
+    uint8_t *data;
+    int length;
+    bool in_use;
+} buffer_pool_entry_t;
+
+static buffer_pool_entry_t buffer_pool[DATA_POOL_SIZE];
+static SemaphoreHandle_t pool_mutex = NULL;
+
+static void init_buffer_pool(void) {
+    pool_mutex = xSemaphoreCreateMutex();
+    for (int i = 0; i < DATA_POOL_SIZE; i++) {
+        buffer_pool[i].data = malloc(UART_BUF_SIZE);
+        buffer_pool[i].in_use = false;
+        buffer_pool[i].length = 0;
+    }
+}
+
+static uart_data_t* allocate_buffer(void) {
+    uart_data_t *result = malloc(sizeof(uart_data_t));
+    if (!result) return NULL;
+    
+    xSemaphoreTake(pool_mutex, portMAX_DELAY);
+    for (int i = 0; i < DATA_POOL_SIZE; i++) {
+        if (!buffer_pool[i].in_use) {
+            buffer_pool[i].in_use = true;
+            result->data = buffer_pool[i].data;
+            result->length = 0;
+            xSemaphoreGive(pool_mutex);
+            return result;
+        }
+    }
+    xSemaphoreGive(pool_mutex);
+    
+    // Pool esaurito, allocazione diretta
+    result->data = malloc(UART_BUF_SIZE);
+    return result;
+}
+
+static void free_buffer(uart_data_t *buffer) {
+    if (!buffer) return;
+    
+    xSemaphoreTake(pool_mutex, portMAX_DELAY);
+    for (int i = 0; i < DATA_POOL_SIZE; i++) {
+        if (buffer_pool[i].data == buffer->data && buffer_pool[i].in_use) {
+            buffer_pool[i].in_use = false;
+            buffer_pool[i].length = 0;
+            xSemaphoreGive(pool_mutex);
+            free(buffer);
+            return;
+        }
+    }
+    xSemaphoreGive(pool_mutex);
+    
+    // Non nel pool, free diretto
+    if (buffer->data) free(buffer->data);
+    free(buffer);
+}
 
 void serial_init(void) {
     const uart_config_t uart_config = {
@@ -33,8 +94,8 @@ void serial_init(void) {
     ESP_ERROR_CHECK(uart_set_pin(UART_NUM, UART_TX_PIN, UART_RX_PIN, 
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     
-    tcp_to_uart_queue = xQueueCreate(TCP_TO_UART_QUEUE_SIZE, sizeof(uint8_t*));
     uart_espnow_queue = xQueueCreate(50, sizeof(uart_data_t*));
+    init_buffer_pool();
 }
 
 void serial_send_data(const uint8_t *data, int length) {
@@ -55,14 +116,8 @@ QueueHandle_t serial_get_queue(void) {
 }
 
 bool serial_get_data(uart_data_t **data, TickType_t wait_time) {
-    uart_data_t *uart_data = malloc(sizeof(uart_data_t));
+    uart_data_t *uart_data = allocate_buffer();
     if (!uart_data) return false;
-    
-    uart_data->data = malloc(UART_BUF_SIZE);
-    if (!uart_data->data) {
-        free(uart_data);
-        return false;
-    }
     
     int len = uart_read_bytes(UART_NUM, uart_data->data, UART_BUF_SIZE, wait_time);
     if (len > 0) {
@@ -71,19 +126,14 @@ bool serial_get_data(uart_data_t **data, TickType_t wait_time) {
         return true;
     }
     
-    free(uart_data->data);
-    free(uart_data);
+    free_buffer(uart_data);
     return false;
 }
 
 void serial_free_data(uart_data_t *data) {
-    if (data) {
-        if (data->data) free(data->data);
-        free(data);
-    }
+    free_buffer(data);
 }
 
-// TASK ESP-NOW separato
 static void espnow_sender_task(void *pvParameters) {
     uart_data_t *data = NULL;
     while (1) {
@@ -102,30 +152,20 @@ static void serial_read_task(void *pvParameters) {
         uart_data_t *data = NULL;
         if (serial_get_data(&data, pdMS_TO_TICKS(10))) {
             if (data && data->data && data->length > 0) {
-                // COPIA per ESP-NOW (coda separata)
-                uart_data_t *espnow_data = malloc(sizeof(uart_data_t));
+                // COPIA per ESP-NOW
+                uart_data_t *espnow_data = allocate_buffer();
                 if (espnow_data) {
-                    espnow_data->data = malloc(data->length);
-                    if (espnow_data->data) {
-                        memcpy(espnow_data->data, data->data, data->length);
-                        espnow_data->length = data->length;
-                        xQueueSend(uart_espnow_queue, &espnow_data, pdMS_TO_TICKS(10));
-                    } else {
-                        free(espnow_data);
-                    }
+                    memcpy(espnow_data->data, data->data, data->length);
+                    espnow_data->length = data->length;
+                    xQueueSend(uart_espnow_queue, &espnow_data, pdMS_TO_TICKS(10));
                 }
                 
-                // COPIA per TCP (coda separata)
-                uart_data_t *tcp_data = malloc(sizeof(uart_data_t));
+                // COPIA per TCP
+                uart_data_t *tcp_data = allocate_buffer();
                 if (tcp_data) {
-                    tcp_data->data = malloc(data->length);
-                    if (tcp_data->data) {
-                        memcpy(tcp_data->data, data->data, data->length);
-                        tcp_data->length = data->length;
-                        xQueueSend(uart_to_tcp_queue, &tcp_data, pdMS_TO_TICKS(100));
-                    } else {
-                        free(tcp_data);
-                    }
+                    memcpy(tcp_data->data, data->data, data->length);
+                    tcp_data->length = data->length;
+                    xQueueSend(uart_to_tcp_queue, &tcp_data, pdMS_TO_TICKS(100));
                 }
             }
             serial_free_data(data);
@@ -140,4 +180,4 @@ void serial_task_start(void) {
                 NULL, SERIAL_TASK_PRIORITY, NULL);
     xTaskCreate(espnow_sender_task, "espnow_sender", 4096, 
                 NULL, 4, NULL);
-}   
+}

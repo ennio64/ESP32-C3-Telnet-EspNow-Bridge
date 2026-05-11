@@ -34,6 +34,13 @@ typedef struct {
     // Debug level (0=off, 1=basic, 2=verbose)
     uint8_t debug_level;
     
+    // ========== GrblHAL Advanced ==========
+    int8_t state_pin;           // GPIO per pin di stato (-1 = disabilitato)
+    uint8_t state_pin_mode;     // 0 = LOW quando connesso, 1 = HIGH quando connesso
+    uint8_t client_mode;        // 0 = Any Client, 1 = Telnet Only, 2 = ESP-NOW Only
+    uint8_t reset_on_disconnect; // 1 = invia reset (Ctrl-X), 0 = non inviare
+    // ======================================
+    
     // Flag per prima configurazione
     bool configured;
 } bridge_config_t;

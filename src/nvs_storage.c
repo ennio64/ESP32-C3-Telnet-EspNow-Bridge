@@ -32,6 +32,14 @@ static void init_default_config(bridge_config_t *config) {
     strcpy(config->static_netmask, "255.255.255.0");
     config->use_static_ip = true;
     config->debug_level = ENABLE_DEBUG_LOGS;
+    
+    // ========== GrblHAL Advanced defaults ==========
+    config->state_pin = -1;              // Disabilitato
+    config->state_pin_mode = 1;          // HIGH quando connesso
+    config->client_mode = 0;             // Telnet Only (0=Any, 1=Telnet Only, 2=ESP-NOW Only)
+    config->reset_on_disconnect = 1;     // Abilitato (invia reset)
+    // ==============================================
+    
     config->configured = true;
     
     ESP_LOGI(TAG, "Default config initialized with %d networks, debug_level=%d", 
@@ -63,12 +71,37 @@ void nvs_storage_init(void) {
             g_config.use_static_ip = true;
             nvs_storage_save_config();
         }
+        
         // Se debug_level non è valido, correggi
         if (g_config.debug_level > 2) {
             ESP_LOGW(TAG, "debug_level non valido (%d), resetto a 0", g_config.debug_level);
             g_config.debug_level = 0;
             nvs_storage_save_config();
         }
+        
+        // ========== Verifica campi GrblHAL (migrazione vecchie config) ==========
+        if (g_config.state_pin < -1 || g_config.state_pin > 10) {
+            ESP_LOGW(TAG, "state_pin non valido (%d), resetto a -1", g_config.state_pin);
+            g_config.state_pin = -1;
+            nvs_storage_save_config();
+        }
+        if (g_config.state_pin_mode > 1) {
+            ESP_LOGW(TAG, "state_pin_mode non valido (%d), resetto a 0", g_config.state_pin_mode);
+            g_config.state_pin_mode = 0;
+            nvs_storage_save_config();
+        }
+        if (g_config.client_mode > 2) {
+            ESP_LOGW(TAG, "client_mode non valido (%d), resetto a 0", g_config.client_mode);
+            g_config.client_mode = 0;
+            nvs_storage_save_config();
+        }
+        if (g_config.reset_on_disconnect > 1) {
+            ESP_LOGW(TAG, "reset_on_disconnect non valido (%d), resetto a 1", g_config.reset_on_disconnect);
+            g_config.reset_on_disconnect = 1;
+            nvs_storage_save_config();
+        }
+        // ========================================================================
+        
         ESP_LOGI(TAG, "Configurazione caricata: %d reti, IP=%s, debug_level=%d", 
                  g_config.network_count, g_config.static_ip, g_config.debug_level);
     }
@@ -105,14 +138,17 @@ bool nvs_storage_load_config(bridge_config_t *config) {
         ESP_LOGI(TAG, "   Reti configurate: %d", config->network_count);
         for (int i = 0; i < config->network_count; i++) {
             ESP_LOGI(TAG, "   [%d] SSID: '%s'", i, config->networks[i].ssid);
-            ESP_LOGI(TAG, "   [%d] PWD:  '%s'", i, config->networks[i].password);
-            ESP_LOGI(TAG, "   [%d] len:  %d", i, strlen(config->networks[i].password));
         }
         ESP_LOGI(TAG, "   AP SSID: '%s'", config->ap_ssid);
-        ESP_LOGI(TAG, "   AP PWD:  '%s'", config->ap_password);
+        ESP_LOGI(TAG, "   AP Channel: %d", config->ap_channel);
         ESP_LOGI(TAG, "   Static IP: %s (use: %s)", config->static_ip, 
                  config->use_static_ip ? "YES" : "NO");
         ESP_LOGI(TAG, "   Debug Level: %d", config->debug_level);
+        ESP_LOGI(TAG, "   --- GrblHAL Advanced ---");
+        ESP_LOGI(TAG, "   State Pin: %d", config->state_pin);
+        ESP_LOGI(TAG, "   State Pin Mode: %d", config->state_pin_mode);
+        ESP_LOGI(TAG, "   Client Mode: %d", config->client_mode);
+        ESP_LOGI(TAG, "   Reset on Disconnect: %d", config->reset_on_disconnect);
         ESP_LOGI(TAG, "========================================");
     } else {
         ESP_LOGI(TAG, "Nessuna configurazione salvata in NVS (err=%d)", err);
@@ -122,12 +158,7 @@ bool nvs_storage_load_config(bridge_config_t *config) {
 }
 
 bool nvs_storage_add_network(const char *ssid, const char *password) {
-    ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "📝 AGGIUNTA NUOVA RETE:");
-    ESP_LOGI(TAG, "   SSID: '%s'", ssid);
-    ESP_LOGI(TAG, "   PWD:  '%s'", password);
-    ESP_LOGI(TAG, "   PWD len: %d", strlen(password));
-    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "📝 AGGIUNTA NUOVA RETE: SSID='%s'", ssid);
     
     if (g_config.network_count >= MAX_KNOWN_NETWORKS) {
         ESP_LOGW(TAG, "Limite reti raggiunto (%d)", MAX_KNOWN_NETWORKS);
@@ -148,7 +179,6 @@ bool nvs_storage_add_network(const char *ssid, const char *password) {
     // Aggiungi nuova
     strncpy(g_config.networks[g_config.network_count].ssid, ssid, MAX_SSID_LEN - 1);
     g_config.networks[g_config.network_count].ssid[MAX_SSID_LEN - 1] = '\0';
-    
     strncpy(g_config.networks[g_config.network_count].password, password, MAX_PASSWORD_LEN - 1);
     g_config.networks[g_config.network_count].password[MAX_PASSWORD_LEN - 1] = '\0';
     
@@ -162,12 +192,10 @@ bool nvs_storage_add_network(const char *ssid, const char *password) {
 bool nvs_storage_remove_network(const char *ssid) {
     for (int i = 0; i < g_config.network_count; i++) {
         if (strcmp(g_config.networks[i].ssid, ssid) == 0) {
-            // Shift rimanenti
             for (int j = i; j < g_config.network_count - 1; j++) {
                 memcpy(&g_config.networks[j], &g_config.networks[j + 1], sizeof(network_t));
             }
             g_config.network_count--;
-            
             ESP_LOGI(TAG, "Rete rimossa: %s", ssid);
             return nvs_storage_save_config();
         }

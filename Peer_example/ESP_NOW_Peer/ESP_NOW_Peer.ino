@@ -1,7 +1,3 @@
-// ============================================================================
-//    ESP32‑S3 Peer (ESP‑NOW)
-// ============================================================================
-
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
@@ -162,6 +158,12 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
         return;
     }
 
+    if (len == 4 && memcmp(data, "PING", 4) == 0) {
+    // Rispondi con PONG
+    esp_now_send(bridge_mac, (uint8_t*)"PONG", 4);
+    return;   // non inoltrare alla seriale
+}
+
     // PAIR_OK
     if (len == 7 && memcmp(data, "PAIR_OK", 7) == 0) {
         memcpy(bridge_mac, info->src_addr, 6);
@@ -318,7 +320,7 @@ void setup() {
     delay(1000);
 
     Serial.println("\n====================================");
-    Serial.println("ESP32-S3 Peer ESP NOW");
+    Serial.println("ESP32-S3 MKS Robin Pendant");
     Serial.println("====================================\n");
 
     WiFi.mode(WIFI_STA);

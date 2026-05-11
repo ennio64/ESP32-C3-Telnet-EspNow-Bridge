@@ -8,5 +8,6 @@
 void tcp_server_start(void);
 void tcp_broadcast_data(const uint8_t *data, int length);
 void tcp_server_set_queue(QueueHandle_t queue);
+int tcp_server_get_client_count(void);  // NUOVA
 
 #endif

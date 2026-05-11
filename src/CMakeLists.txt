@@ -7,7 +7,7 @@ idf_component_register(SRCS
     espnow_handler.c
     nvs_storage.c
     web_server.c
-    INCLUDE_DIRS 
+    grblHAL_advanced.c  
         "."
         "../include"
     REQUIRES 

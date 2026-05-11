@@ -1,12 +1,8 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// ============================================================
-// DEBUG E LOGGING 
-// ============================================================
-// 0 = TUTTI I LOG DISABILITATI
-// 1 = Log attivi
-#define ENABLE_DEBUG_LOGS             0
+// Log sistema
+#define ENABLE_DEBUG_LOGS             1   // sempre 1 (sono gestiti da NVS)
 
 // Configurazione seriale
 #define UART_NUM             UART_NUM_0
