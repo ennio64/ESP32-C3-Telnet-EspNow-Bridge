@@ -129,14 +129,17 @@ ESP32-C3-Serial-Bridge/
 │   ├── flash.bat                 # Windows flasher
 │   └── flash.sh                  # Linux/Mac flasher
 │
-├── Peer_example/                 # ESP-NOW pendant example
+├── Peer_example/                 # ESP-NOW pendant example (Arduino)
 │   ├── Peer_example.ino          # Arduino IDE sketch
 │   └── README.md                 # Pendant documentation
+│
+├── CNC_Pendant_DEMO/             # CNC Pendant Web UI demo
+│   ├── CNC_Pendant_DEMO.ino      # Complete ESP32 Web Pendant DEMO firmware
+│   └── README.md                 # Documentation for the Web Pendant demo
 │
 ├── platformio.ini
 ├── CMakeLists.txt
 └── README.md
-
 ```
 
 ---
@@ -346,10 +349,7 @@ Usage:
 | 1 | BASIC | Errors + key events |
 | 2 | VERBOSE | Full WiFi + ESP‑NOW logs |
 
-Enable via Web UI or edit in `config.h`:
-```c
-#define ENABLE_DEBUG_LOGS 0
-```
+Enable via Web UI 
 
 ---
 
