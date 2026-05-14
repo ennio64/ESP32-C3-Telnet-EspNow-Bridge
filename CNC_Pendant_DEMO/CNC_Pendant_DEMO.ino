@@ -593,7 +593,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 
   <div class="test-section">
-    <button class="btn-test" onclick='runTest()'>RUN TEST (400 lines)</button>
+    <button class="btn-test" onclick='runTest()'>RUN TEST (401 lines)</button>
     <div class="input-group">
       <input type="text" id="customCmd" placeholder="G-code command (eg: G1 X50 F100)" autocomplete="off">
       <button class="success" onclick='sendCustom()'>SEND</button>
@@ -703,7 +703,7 @@ void handleCommand() {
 void handlePing() { server.send(200, "text/plain", "pong"); }
 void handleTest() {
   Serial.println("🚀 Test avviato dal web");
-  String gcode = generateTestGcode(400, 10.0, 0.0);
+  String gcode = generateTestGcode(200, 10.0, 0.0);
   if (sendGCodeEspNowStream(gcode))
     server.send(200, "text/plain", "Test OK (400 lines sent)");
   else
